@@ -285,8 +285,13 @@ class StreamSDK:
 
             if item is None:
                 break
-            res_frame_rgb = item
-            self.writer(res_frame_rgb, fmt="rgb")
+            
+            if isinstance(item, tuple):
+                res_frame_rgb, audio_chunk = item
+                self.writer(res_frame_rgb, audio_chunk, fmt="rgb")
+            else:
+                res_frame_rgb = item
+                self.writer(res_frame_rgb, fmt="rgb")
             self.writer_pbar.update()
 
     def putback_worker(self):
@@ -305,11 +310,12 @@ class StreamSDK:
             if item is None:
                 self.writer_queue.put(None)
                 break
-            frame_idx, render_img = item
+            
+            frame_idx, render_img, audio_chunk = item  # Now includes audio_chunk
             frame_rgb = self.source_info["img_rgb_lst"][frame_idx]
             M_c2o = self.source_info["M_c2o_lst"][frame_idx]
             res_frame_rgb = self.putback(frame_rgb, render_img, M_c2o)
-            self.writer_queue.put(res_frame_rgb)
+            self.writer_queue.put((res_frame_rgb, audio_chunk))  # Send both frame and audio
 
     def decode_f3d_worker(self):
         try:
@@ -426,7 +432,6 @@ class StreamSDK:
                         real_valid_len = len(aud_feat)
                         pad = np.stack([aud_feat[-1]] * (seq_frames - len(aud_feat)), 0)
                         aud_feat = np.concatenate([aud_feat, pad], 0)
-
                 aud_cond = self.condition_handler(aud_feat, global_idx + self.cond_idx_start)[None]
                 res_kp_seq = self.audio2motion(aud_cond, res_kp_seq)
                 if res_kp_seq_valid_start is None:
@@ -459,7 +464,6 @@ class StreamSDK:
                 
                     local_idx += real_valid_len
                     global_idx += real_valid_len
-
                 L = res_kp_seq.shape[1] 
                 if L > seq_frames * 2:
                     cut_L = L - seq_frames * 2

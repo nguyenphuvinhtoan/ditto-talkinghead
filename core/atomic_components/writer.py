@@ -1,36 +1,40 @@
 import imageio
 import os
+import moviepy.editor as mpy
+import numpy as np
 
 
 class VideoWriterByImageIO:
     def __init__(self, video_path, fps=25, **kwargs):
-        video_format = kwargs.get("format", "mp4")  # default is mp4 format
-        codec = kwargs.get("vcodec", "libx264")  # default is libx264 encoding
-        quality = kwargs.get("quality")  # video quality
-        pixelformat = kwargs.get("pixelformat", "yuv420p")  # video pixel format
-        macro_block_size = kwargs.get("macro_block_size", 2)
-        ffmpeg_params = ["-crf", str(kwargs.get("crf", 18))]
-
-        os.makedirs(os.path.dirname(video_path), exist_ok=True)
+        self.fps = fps
+        self.frames = []
+        self.audio_chunks = []
+        self.samples_per_frame = int(16000 / fps)  # Assuming 16kHz audio
         
-        writer = imageio.get_writer(
-            video_path,
-            fps=fps,
-            format=video_format,
-            codec=codec,
-            quality=quality,
-            ffmpeg_params=ffmpeg_params,
-            pixelformat=pixelformat,
-            macro_block_size=macro_block_size,
-        )
-        self.writer = writer
-
-    def __call__(self, img, fmt="bgr"):
+    def __call__(self, frame, audio_chunk=None, fmt="bgr"):
         if fmt == "bgr":
-            frame = img[..., ::-1]
-        else:
-            frame = img
-        self.writer.append_data(frame)
-
+            frame = frame[..., ::-1]
+        self.frames.append(frame)
+        if audio_chunk is not None:
+            self.audio_chunks.append(audio_chunk)
+            
     def close(self):
-        self.writer.close()
+        # Combine frames and audio chunks
+        # Create video clip from frames
+        video_clip = mpy.ImageSequenceClip(self.frames, fps=self.fps)
+        
+        # Combine audio chunks and create audio clip
+        if self.audio_chunks:
+            audio_array = np.concatenate(self.audio_chunks)
+            audio_clip = mpy.AudioArrayClip(audio_array.reshape(1, -1), fps=16000)
+            
+            # Combine video and audio
+            final_clip = video_clip.set_audio(audio_clip)
+        else:
+            final_clip = video_clip
+            
+        # Write to file
+        final_clip.write_videofile(self.output_path, 
+                                 codec='libx264',
+                                 audio_codec='aac',
+                                 fps=self.fps)

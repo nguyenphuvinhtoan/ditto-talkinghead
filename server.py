@@ -1,6 +1,6 @@
 # server.py
 from http.client import HTTPException
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,8 @@ import asyncio
 import queue
 from typing import Iterator
 import io
+import json
+import base64
 
 app = FastAPI()
 
@@ -33,6 +35,7 @@ class StreamingSDKWrapper:
     def __init__(self, cfg_pkl, data_root):
         self.sdk = StreamSDK(cfg_pkl, data_root)
         self.frame_queue = queue.Queue(maxsize=100)
+        self.audio_queue = queue.Queue(maxsize=100)
         self.is_processing = False
         
     async def process_audio(self, audio: np.ndarray, source_path: str, setup_kwargs=None):
@@ -76,6 +79,30 @@ class StreamingSDKWrapper:
             return self.frame_queue.get_nowait()
         except queue.Empty:
             return None
+
+    def frame_collector_worker(self):
+        while self.is_processing:
+            try:
+                item = self.sdk.writer_queue.get(timeout=1)
+                if item is None:
+                    break
+                    
+                if isinstance(item, tuple):
+                    frame, audio_chunk = item
+                    self.frame_queue.put(frame)
+                    self.audio_queue.put(audio_chunk)
+                else:
+                    self.frame_queue.put(item)
+            except queue.Empty:
+                continue
+
+    async def get_frame_and_audio(self):
+        try:
+            frame = self.frame_queue.get_nowait()
+            audio = self.audio_queue.get_nowait()
+            return frame, audio
+        except queue.Empty:
+            return None, None
 
 sdk_wrapper = StreamingSDKWrapper(
     cfg_pkl="./checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl",
@@ -151,6 +178,38 @@ async def process_audio_video(
     except Exception as e:
         print(f"Error in process_audio_video: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stream")
+async def stream_response():
+    async def event_generator():
+        while True:
+            frame, audio = await sdk_wrapper.get_frame_and_audio()
+            if frame is None:
+                await asyncio.sleep(0.01)
+                continue
+                
+            # Convert frame to JPEG
+            _, buffer = cv2.imencode('.jpg', frame)
+            frame_base64 = base64.b64encode(buffer).decode('utf-8')
+            
+            # Convert audio to base64
+            audio_base64 = base64.b64encode(audio).decode('utf-8')
+            
+            # Create event data
+            data = {
+                'frame': frame_base64,
+                'audio': audio_base64
+            }
+            
+            yield f"data: {json.dumps(data)}\n\n"
+            
+            # Control frame rate
+            await asyncio.sleep(1/25)  # 25 FPS
+
+    return Response(
+        event_generator(),
+        media_type="text/event-stream"
+    )
 
 @app.get("/")
 async def read_root():

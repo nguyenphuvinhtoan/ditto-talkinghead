@@ -15,6 +15,7 @@ class StreamingSDKWrapper:
     def __init__(self, cfg_pkl, data_root):
         self.sdk = StreamSDK(cfg_pkl, data_root)
         self.frame_queue = queue.Queue(maxsize=100)
+        self.audio_queue = queue.Queue(maxsize=100)
         self.is_processing = False
         self.current_session = None
         
@@ -32,15 +33,26 @@ class StreamingSDKWrapper:
     def frame_collector_worker(self):
         while self.is_processing:
             try:
-                frame = self.sdk.writer_queue.get(timeout=1)
-                if frame is None:
+                item = self.sdk.writer_queue.get(timeout=1)
+                if item is None:
                     break
-                self.frame_queue.put(frame)
+                    
+                if isinstance(item, tuple):
+                    frame, audio_chunk = item
+                    self.frame_queue.put(frame)
+                    self.audio_queue.put(audio_chunk)
+                else:
+                    self.frame_queue.put(item)
             except queue.Empty:
                 continue
-            except Exception as e:
-                print(f"Error in frame collector: {e}")
-                break
+
+    async def get_frame_and_audio(self):
+        try:
+            frame = self.frame_queue.get_nowait()
+            audio = self.audio_queue.get_nowait()
+            return frame, audio
+        except queue.Empty:
+            return None, None
 
     async def start_session(self, source_path, setup_kwargs=None):
         if self.is_processing:
