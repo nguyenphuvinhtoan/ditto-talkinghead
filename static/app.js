@@ -4,9 +4,6 @@ let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 let scriptProcessor = null;
 let sourceImagePath = null;
 let sourceAudioPath = null;
-let audioPlaybackContext = null;
-let audioPlaybackSource = null;
-let audioPlaybackProcessor = null;
 let audioQueue = [];
 let isPlayingAudio = false;
 
@@ -88,7 +85,6 @@ async function startStreaming() {
     try {
         // Create new audio contexts
         audioContext = new AudioContext();
-        audioPlaybackContext = new AudioContext();
         
         // If we have an uploaded audio file, use it
         if (sourceAudioPath) {
@@ -112,13 +108,14 @@ async function startStreaming() {
             ws.onopen = () => {
                 statusText.textContent = 'Status: Connected';
                 startButton.disabled = true;
-                stopButton.disabled = false;
                 // Start playing audio when connection is established
                 source.start(0);
             };
             
             ws.onclose = () => {
-                stopStreaming();
+                // Reset UI when connection closes
+                startButton.disabled = false;
+                statusText.textContent = 'Status: Ready';
             };
             
             ws.onmessage = (event) => {
@@ -203,11 +200,6 @@ function stopStreaming() {
     if (audioContext) {
         audioContext.close();
         audioContext = null;
-    }
-    
-    if (audioPlaybackContext) {
-        audioPlaybackContext.close();
-        audioPlaybackContext = null;
     }
     
     // Clear audio queue

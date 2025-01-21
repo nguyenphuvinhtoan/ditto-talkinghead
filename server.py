@@ -4,16 +4,13 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import numpy as np
-import cv2
-import io
 from inference_online import OnlineInference
 from stream_pipeline_online import StreamSDK
 import queue
-import threading
 import base64
-import os
 from pathlib import Path
 import shutil
+import imageio
 
 app = FastAPI()
 
@@ -44,15 +41,21 @@ class StreamingServer:
         self.is_running = False
         self.connected_clients = set()
         
-        # Override SDK's writer
+        # Store original writer and create wrapper
         self.original_writer = self.sdk.writer
-        self.sdk.writer = self.frame_callback
+        self.sdk.writer = self.writer_wrapper
         
-    def frame_callback(self, frame, fmt="rgb"):
-        if fmt == "rgb":
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    def writer_wrapper(self, frame, fmt="rgb"):
+        # First call the original writer
+        if self.original_writer:
+            self.original_writer(frame, fmt)
+            
+        # Then handle the frame for streaming
+        if fmt == "bgr":
+            frame = frame[..., ::-1]  # Convert BGR to RGB using numpy slice
         
-        _, buffer = cv2.imencode('.jpg', frame)
+        # Use imageio to encode frame to JPEG bytes
+        buffer = imageio.imwrite("<bytes>", frame, format='JPEG', plugin='pillow')
         jpg_as_text = base64.b64encode(buffer).decode('utf-8')
         
         try:
@@ -76,6 +79,8 @@ class StreamingServer:
     def stop(self):
         if self.is_running:
             self.is_running = False
+            # Restore original writer before stopping
+            self.sdk.writer = self.original_writer
             self.inference.stop()
             
     async def get_next_frame(self):

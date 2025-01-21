@@ -246,7 +246,7 @@ class StreamSDK:
         self.writer_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
 
         # Add new queue for synchronized video+audio
-        self.video_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
+        # self.video_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
         
         # Add new thread for video+audio processing
         self.thread_list = [
@@ -256,7 +256,7 @@ class StreamSDK:
             threading.Thread(target=self.decode_f3d_worker),
             threading.Thread(target=self.putback_worker),
             threading.Thread(target=self.writer_worker),
-            threading.Thread(target=self.video_sync_worker),  # New worker
+            # threading.Thread(target=self.video_sync_worker),  # New worker
         ]
 
         for thread in self.thread_list:
@@ -309,17 +309,18 @@ class StreamSDK:
                 continue
             if item is None:
                 self.writer_queue.put(None)
-                self.video_queue.put(None)  # Signal end of processing
+                # self.video_queue.put(None)  # Signal end of processing
                 break
                 
-            frame_idx, render_img, audio_chunk = item  # Modified to include audio
+            frame_idx, render_img = item  # Modified to include audio
+            # frame_idx, render_img, audio_chunk = item  # Modified to include audio
             frame_rgb = self.source_info["img_rgb_lst"][frame_idx]
             M_c2o = self.source_info["M_c2o_lst"][frame_idx]
             res_frame_rgb = self.putback(frame_rgb, render_img, M_c2o)
             
             # Send frame to both queues
             self.writer_queue.put(res_frame_rgb)
-            self.video_queue.put((res_frame_rgb, audio_chunk))  # Tuple of frame and audio
+            # self.video_queue.put((res_frame_rgb, audio_chunk))  # Tuple of frame and audio
 
     def decode_f3d_worker(self):
         try:
@@ -337,9 +338,11 @@ class StreamSDK:
             if item is None:
                 self.putback_queue.put(None)
                 break
-            frame_idx, f_3d, audio_chunk = item  # Modified to include audio
+            frame_idx, f_3d = item  # Modified to include audio
+            # frame_idx, f_3d, audio_chunk = item  # Modified to include audio
             render_img = self.decode_f3d(f_3d)
-            self.putback_queue.put([frame_idx, render_img, audio_chunk])  # Pass along audio
+            self.putback_queue.put([frame_idx, render_img])
+            # self.putback_queue.put([frame_idx, render_img, audio_chunk])  # Pass along audio
 
     def warp_f3d_worker(self):
         try:
@@ -357,10 +360,12 @@ class StreamSDK:
             if item is None:
                 self.decode_f3d_queue.put(None)
                 break
-            frame_idx, x_s, x_d, audio_chunk = item  # Modified to include audio
+            frame_idx, x_s, x_d = item  # Modified to include audio
+            # frame_idx, x_s, x_d, audio_chunk = item  # Modified to include audio
             f_s = self.source_info["f_s_lst"][frame_idx]
             f_3d = self.warp_f3d(f_s, x_s, x_d)
-            self.decode_f3d_queue.put([frame_idx, f_3d, audio_chunk])  # Pass along audio
+            self.decode_f3d_queue.put([frame_idx, f_3d])  # Pass along audio
+            # self.decode_f3d_queue.put([frame_idx, f_3d, audio_chunk])  # Pass along audio
 
     def motion_stitch_worker(self):
         try:
@@ -379,10 +384,12 @@ class StreamSDK:
                 self.warp_f3d_queue.put(None)
                 break
             
-            frame_idx, x_d_info, ctrl_kwargs, audio_chunk = item  # Modified to include audio
+            frame_idx, x_d_info, ctrl_kwargs = item  # Modified to include audio
+            # frame_idx, x_d_info, ctrl_kwargs, audio_chunk = item  # Modified to include audio
             x_s_info = self.source_info["x_s_info_lst"][frame_idx]
             x_s, x_d = self.motion_stitch(x_s_info, x_d_info, **ctrl_kwargs)
-            self.warp_f3d_queue.put([frame_idx, x_s, x_d, audio_chunk])  # Pass along audio
+            self.warp_f3d_queue.put([frame_idx, x_s, x_d])  # Pass along audio
+            # self.warp_f3d_queue.put([frame_idx, x_s, x_d, audio_chunk])  # Pass along audio
 
     def audio2motion_worker(self):
         try:
@@ -457,11 +464,12 @@ class StreamSDK:
                         ctrl_kwargs = self._get_ctrl_info(gen_frame_idx)
                         
                         # Pass the corresponding audio chunk along with the frame
-                        audio_chunk = aud_feat[gen_frame_idx] if gen_frame_idx < len(aud_feat) else None
+                        # audio_chunk = aud_feat[gen_frame_idx] if gen_frame_idx < len(aud_feat) else None
                         
                         while not self.stop_event.is_set():
                             try:
-                                self.motion_stitch_queue.put([frame_idx, x_d_info, ctrl_kwargs, audio_chunk], timeout=1)
+                                self.motion_stitch_queue.put([frame_idx, x_d_info, ctrl_kwargs], timeout=1)
+                                # self.motion_stitch_queue.put([frame_idx, x_d_info, ctrl_kwargs, audio_chunk], timeout=1)
                                 break
                             except queue.Full:
                                 continue
@@ -493,78 +501,78 @@ class StreamSDK:
         
         self.motion_stitch_queue.put(None)
 
-    def video_sync_worker(self):
-        """Worker to handle synchronized video and audio processing"""
-        try:
-            self._video_sync_worker()
-        except Exception as e:
-            self.worker_exception = e
-            self.stop_event.set()
+    # def video_sync_worker(self):
+    #     """Worker to handle synchronized video and audio processing"""
+    #     try:
+    #         self._video_sync_worker()
+    #     except Exception as e:
+    #         self.worker_exception = e
+    #         self.stop_event.set()
 
-    def _video_sync_worker(self):
-        import numpy as np
-        import soundfile as sf
-        from moviepy.editor import VideoFileClip, AudioFileClip
+    # def _video_sync_worker(self):
+    #     import numpy as np
+    #     import soundfile as sf
+    #     from moviepy.editor import VideoFileClip, AudioFileClip
         
-        frames = []
-        audio_chunks = []
+    #     frames = []
+    #     audio_chunks = []
         
-        # Collect all frames and audio chunks
-        while not self.stop_event.is_set():
-            try:
-                item = self.video_queue.get(timeout=1)
-            except queue.Empty:
-                continue
+    #     # Collect all frames and audio chunks
+    #     while not self.stop_event.is_set():
+    #         try:
+    #             item = self.video_queue.get(timeout=1)
+    #         except queue.Empty:
+    #             continue
                 
-            if item is None:
-                break
+    #         if item is None:
+    #             break
                 
-            frame, audio_chunk = item
-            frames.append(frame)
-            audio_chunks.append(audio_chunk)
+    #         frame, audio_chunk = item
+    #         frames.append(frame)
+    #         audio_chunks.append(audio_chunk)
 
-        if frames:  # Only process if we have frames
-            # Combine audio chunks
-            combined_audio = np.concatenate(audio_chunks)
+    #     if frames:  # Only process if we have frames
+    #         # Combine audio chunks
+    #         combined_audio = np.concatenate(audio_chunks)
             
-            # Save temporary audio file
-            temp_audio_path = self.output_path + ".tmp.wav"
-            sf.write(temp_audio_path, combined_audio, samplerate=16000)
+    #         # Save temporary audio file
+    #         temp_audio_path = self.output_path + ".tmp.wav"
+    #         sf.write(temp_audio_path, combined_audio, samplerate=16000)
             
-            # Wait for video writing to complete
-            self.writer.close()
+    #         # Wait for video writing to complete
+    #         self.writer.close()
             
-            # Combine video with audio
-            video = VideoFileClip(self.tmp_output_path)
-            audio = AudioFileClip(temp_audio_path)
+    #         # Combine video with audio
+    #         video = VideoFileClip(self.tmp_output_path)
+    #         audio = AudioFileClip(temp_audio_path)
             
-            # Ensure audio and video have same duration
-            if audio.duration > video.duration:
-                audio = audio.subclip(0, video.duration)
-            elif video.duration > audio.duration:
-                video = video.subclip(0, audio.duration)
+    #         # Ensure audio and video have same duration
+    #         if audio.duration > video.duration:
+    #             audio = audio.subclip(0, video.duration)
+    #         elif video.duration > audio.duration:
+    #             video = video.subclip(0, audio.duration)
             
-            # Combine and write final output
-            final_video = video.set_audio(audio)
-            final_video.write_videofile(
-                self.output_path,
-                codec='libx264',
-                audio_codec='aac',
-                temp_audiofile=temp_audio_path,
-                remove_temp=True
-            )
+    #         # Combine and write final output
+    #         final_video = video.set_audio(audio)
+    #         final_video.write_videofile(
+    #             self.output_path,
+    #             codec='libx264',
+    #             audio_codec='aac',
+    #             temp_audiofile=temp_audio_path,
+    #             remove_temp=True
+    #         )
             
-            # Cleanup
-            video.close()
-            audio.close()
-            final_video.close()
+    #         # Cleanup
+    #         video.close()
+    #         audio.close()
+    #         final_video.close()
             
-            # Remove temporary files
-            import os
-            if os.path.exists(self.tmp_output_path):
-                os.remove(self.tmp_output_path)
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
+    #         # Remove temporary files
+    #         import os
+    #         if os.path.exists(self.tmp_output_path):
+    #             os.remove(self.tmp_output_path)
+    #         if os.path.exists(temp_audio_path):
+    #             os.remove(temp_audio_path)
 
     def close(self):
         # flush frames
@@ -574,7 +582,7 @@ class StreamSDK:
             thread.join()
 
         try:
-            self.writer.close()
+            # self.writer.close()
             self.writer_pbar.close()
         except:
             traceback.print_exc()
